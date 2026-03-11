@@ -1,20 +1,63 @@
 version: 2.1
 
 jobs:
-  build_and_test:
+  build:
     docker:
       - image: cimg/node:20.17
     steps:
       - checkout
+      - restore_cache:
+          keys:
+            - v1-deps-{{ checksum "package-lock.json" }}
+            - v1-deps-
       - run:
           name: Install dependencies
           command: npm install
+      - save_cache:
+          key: v1-deps-{{ checksum "package-lock.json" }}
+          paths:
+            - node_modules
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .
+
+  test:
+    docker:
+      - image: cimg/node:20.17
+    steps:
+      - attach_workspace:
+          at: .
       - run:
           name: Run tests
           command: npm test
 
+  deploy:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - add_ssh_keys
+      - run:
+          name: Deploy to EC2
+          command: |
+            ssh -o StrictHostKeyChecking=no ${EC2_USERNAME}@${EC2_PUBLIC_DNS} '
+              cd /home/ubuntu/DevOpsSecCA-SimpleApplication &&
+              git pull origin main &&
+              npm install &&
+              pm2 restart example_app || pm2 start ./bin/www --name example_app
+            '
+
 workflows:
   version: 2
-  build_test_workflow:
+  build-test-deploy:
     jobs:
-      - build_and_test
+      - build
+      - test:
+          requires:
+            - build
+      - deploy:
+          requires:
+            - test
+          filters:
+            branches:
+              only: main
